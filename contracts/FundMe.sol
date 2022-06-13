@@ -11,21 +11,21 @@ contract FundMe {
     // address of the contract
     using PriceConverter for uint256;
 
-    mapping(address => uint256) public addressToAmountFunded;
-    address[] public funders;
+    mapping(address => uint256) private s_addressToAmountFunded;
+    address[] private s_funders;
 
     // Could we make this constant?  /* hint: no! We should make it immutable! */
-    address public immutable i_owner;
+    address private immutable i_owner;
     uint256 public constant MINIMUM_USD = 50 * 10**18;
 
-    AggregatorV3Interface public priceFeed;
+    AggregatorV3Interface private s_priceFeed;
 
     // Since we want to work with multiple chains and the address of pricefeed might vary we will parameterise it
     constructor(address priceFeedAddress) {
         // Address of Aggregator will differ from chain to chain so we will take input from the constructor
         i_owner = msg.sender;
         // we will get an handle of the AggregatorV3 initialised inside the constructor itself
-        priceFeed = AggregatorV3Interface(priceFeedAddress);
+        s_priceFeed = AggregatorV3Interface(priceFeedAddress);
     }
 
     function fund() public payable {
@@ -35,17 +35,17 @@ contract FundMe {
             parameters is the 2nd argument
          */
         require(
-            msg.value.getConversionRate(priceFeed) >= MINIMUM_USD,
+            msg.value.getConversionRate(s_priceFeed) >= MINIMUM_USD,
             "You need to spend more ETH!"
         );
         // require(PriceConverter.getConversionRate(msg.value) >= MINIMUM_USD, "You need to spend more ETH!");
-        addressToAmountFunded[msg.sender] += msg.value;
-        funders.push(msg.sender);
+        s_addressToAmountFunded[msg.sender] += msg.value;
+        s_funders.push(msg.sender);
     }
 
     function getVersion() public view returns (uint256) {
         // priceFeed made a global variable
-        return priceFeed.version();
+        return s_priceFeed.version();
     }
 
     modifier onlyOwner() {
@@ -53,17 +53,17 @@ contract FundMe {
         if (msg.sender != i_owner) revert FundMe__NotOwner();
         _;
     }
-
+    // This is gas inefficient as we are acessing a storage value a lot 
     function withdraw() public payable onlyOwner {
         for (
             uint256 funderIndex = 0;
-            funderIndex < funders.length;
+            funderIndex < s_funders.length;
             funderIndex++
         ) {
-            address funder = funders[funderIndex];
-            addressToAmountFunded[funder] = 0;
+            address funder = s_funders[funderIndex];
+            s_addressToAmountFunded[funder] = 0;
         }
-        funders = new address[](0);
+        s_funders = new address[](0);
         // // transfer
         // payable(msg.sender).transfer(address(this).balance);
         // // send
@@ -76,6 +76,38 @@ contract FundMe {
         require(callSuccess, "Call failed");
     }
 
+
+    function cheaperWithdraw() public payable onlyOwner{
+        // anyways the variables which are declared inside a function have memory storage but since we have a special 
+        // datatype of array we need to specify the data location
+        address[] memory funders = s_funders;//copying the state variable to memory as ot will be cheaper to work with 
+        // N.B: Mappings cannot be in memory
+        for(uint256 funderIndex = 0; funderIndex < funders.length; funderIndex++){
+            address funder = funders[funderIndex];
+            s_addressToAmountFunded[funder] = 0;
+        }
+        s_funders = new address[](0);
+        (bool success, ) = i_owner.call{value: address(this).balance}("");
+        require(success);
+    }
+
+    /*
+        Since anyway people can view our source code so we make this getter function to view the variables after we make them
+        private. Since private functions are expensive. 
+    */
+
+    function getOwner() public view returns(address){
+        return i_owner;
+    }
+    function getFunder(uint256 index) public view returns(address) {
+        return s_funders[index];
+    }
+    function getAddressToAmountFunded(address funder) public view returns(uint256){
+        return s_addressToAmountFunded[funder];
+    }
+    function getPriceFeed() public view returns (AggregatorV3Interface){
+        return s_priceFeed;
+    }
     // Explainer from: https://solidity-by-example.org/fallback/
     // Ether is sent to contract
     //      is msg.data empty?
